@@ -1,0 +1,39 @@
+name: Build endpoints reference
+
+# Verifies the committed lexicons match their pinned CIDs, regenerates the
+# OpenAPI spec, and renders the Scalar static site. Deploy is handled by
+# Railway's GitHub integration (auto-deploys on push to main).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Errors if the committed lexicons/ don't match the CIDs in lexicons.json.
+      - name: Verify pinned lexicons
+        run: npm run install-lexicons:ci
+
+      - name: Generate OpenAPI spec
+        run: npm run build:openapi
+
+      - name: Render static site
+        run: npm run build:site
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: endpoints-site
+          path: out
