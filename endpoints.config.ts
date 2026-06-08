@@ -50,3 +50,25 @@ export const NAMESPACE_ORDER: string[] = [
   "tools.ozone.",
 ];
 
+/**
+ * The reference is split into several documents, surfaced as a switcher dropdown
+ * in the rendered site (Scalar's multi-source `sources`). Each view owns a subset
+ * of the covered namespaces; an endpoint lands in the first view whose `prefixes`
+ * match its NSID. Every view shares the same Introduction (`info.description`).
+ *
+ * `slug` is the document's URL key — it appears in the hash (e.g.
+ * `#bluesky-dms/description/introduction`) and is what the Introduction's
+ * cross-links point at, so keep these in sync with `SHARED_DESCRIPTION`.
+ */
+export interface View {
+  slug: string;
+  title: string;
+  prefixes: string[];
+}
+
+export const VIEWS: View[] = [
+  { slug: "bluesky-app", title: "Bluesky App", prefixes: ["app.bsky.", "com.atproto."] },
+  { slug: "bluesky-dms", title: "Bluesky DMs", prefixes: ["chat.bsky."] },
+  { slug: "ozone-moderation", title: "Ozone Moderation", prefixes: ["tools.ozone."] },
+];
+

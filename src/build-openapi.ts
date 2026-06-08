@@ -3,8 +3,10 @@
  *
  * Node/TS port of the original Deno `atproto-openapi-types/main.ts`. Reads the
  * lexicon JSON installed by `@atproto/lex` (`lexicons/**​/*.json`), converts each
- * query/procedure into an OpenAPI path and each schema def into a component, and
- * writes `openapi.json`. The rendered reference (Scalar) consumes that file.
+ * query/procedure into an OpenAPI path and each schema def into a component.
+ * Endpoints are partitioned by namespace into the views in `VIEWS`, and one
+ * `openapi.<slug>.json` document is written per view. The rendered reference
+ * (Scalar) loads them as a multi-source switcher.
  */
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -60,19 +62,52 @@ import {
   convertString,
   convertToken,
 } from "./lib/converters/mod";
-import { INCLUDE_PREFIXES, NAMESPACE_ORDER } from "../endpoints.config";
+import { INCLUDE_PREFIXES, NAMESPACE_ORDER, VIEWS, type View } from "../endpoints.config";
 
 const LEXICONS_DIR = resolve(process.cwd(), "lexicons");
-const OUTPUT = resolve(process.cwd(), "openapi.json");
 
-const paths: OpenAPIV3_1.PathsObject = {};
+/** Per-view file written next to this config: `openapi.<slug>.json`. */
+function outputFor(slug: string): string {
+  return resolve(process.cwd(), `openapi.${slug}.json`);
+}
+
+/**
+ * Shared Introduction (`info.description`), rendered as the first sidebar item in
+ * every view. The cross-links in the routing bullet point at the per-view hash
+ * slugs from `VIEWS` — keep them in sync.
+ */
+const SHARED_DESCRIPTION = [
+  "This is the HTTP API reference for Bluesky. It covers the `app.bsky.*`, `com.atproto.*`, `chat.bsky.*`, and `tools.ozone.*` Lexicon namespaces — the Lexicons implemented by the Bluesky application, its related services (DMs, Ozone moderation), and the AT Protocol [PDS](https://atproto.com/guides/the-at-stack#pds) those services build on. Use the document switcher in the top left to move between endpoints.",
+  "The wider AT Protocol Lexicon ecosystem is open and any service can publish its own Lexicons. For an index of community Lexicons see [lexicon.garden](https://lexicon.garden/), and for the schema language itself see the [Lexicon guide](https://atproto.com/guides/lexicon).",
+  "## Authentication and request routing",
+  "These endpoints don't all live on the same host, and where a request should be sent depends on whether the caller is authenticated:",
+  [
+    "- **Most `app.bsky.*` `GET`s are public** and can be called without authentication against the Bluesky AppView at `https://public.api.bsky.app`. `POST`s (writes) and any endpoint that returns account-private data require auth.",
+    "- **Authenticated requests should be sent to the user's own PDS**. The PDS validates the session and, if needed, proxies the request to the correct backend. Proxied requests should [include an `atproto-proxy` header](https://atproto.com/specs/xrpc#service-proxying). [Bluesky DMs](#bluesky-dms/description/introduction) and [Ozone Moderation](#ozone-moderation/description/introduction) requests always require proxying.",
+  ].join("\n"),
+  "For client libraries that handle session management and proxying for you, see the [AT Protocol SDKs](https://atproto.com/sdks).",
+].join("\n\n");
+
+/** Schema components are shared across views (cross-namespace `$ref`s are common). */
 const components: OpenAPIV3_1.ComponentsObject = {
   schemas: {},
   securitySchemes: {
     Bearer: { type: "http", scheme: "bearer" },
   },
 };
-const tagNames = new Set<string>();
+
+/** Endpoint paths and sidebar tags, accumulated per view (keyed by slug). */
+const viewPaths: Record<string, OpenAPIV3_1.PathsObject> = {};
+const viewTags: Record<string, Set<string>> = {};
+for (const v of VIEWS) {
+  viewPaths[v.slug] = {};
+  viewTags[v.slug] = new Set<string>();
+}
+
+/** First view whose prefixes match this NSID (where the endpoint is filed). */
+function viewForId(id: string): View | undefined {
+  return VIEWS.find((v) => v.prefixes.some((p) => id.startsWith(p)));
+}
 
 /** Flag a (non-`$ref`) component schema as deprecated, in place. */
 function markDeprecated(
@@ -91,7 +126,7 @@ function namespaceRank(id: string): number {
   return i === -1 ? NAMESPACE_ORDER.length : i;
 }
 
-function sortedTags(): string[] {
+function sortedTags(tagNames: Set<string>): string[] {
   return Array.from(tagNames).sort((a, b) => {
     const ra = namespaceRank(a);
     const rb = namespaceRank(b);
@@ -172,25 +207,29 @@ async function main() {
           break;
         case "procedure": {
           if (!isEndpointNamespace) break;
+          const view = viewForId(id);
+          if (!view) break;
           const post = convertProcedure(id, name, def);
           if (post) {
             (post as any)["x-codeSamples"] = codeSamplesFor(id, def);
             injectProxyHeader(post, id);
             // @ts-ignore method-keyed PathItem
-            paths[`/xrpc/${id}`] = { post };
-            tagNames.add(calculateTag(id));
+            viewPaths[view.slug][`/xrpc/${id}`] = { post };
+            viewTags[view.slug].add(calculateTag(id));
           }
           break;
         }
         case "query": {
           if (!isEndpointNamespace) break;
+          const view = viewForId(id);
+          if (!view) break;
           const get = convertQuery(id, name, def);
           if (get) {
             (get as any)["x-codeSamples"] = codeSamplesFor(id, def);
             injectProxyHeader(get, id);
             // @ts-ignore method-keyed PathItem
-            paths[`/xrpc/${id}`] = { get };
-            tagNames.add(calculateTag(id));
+            viewPaths[view.slug][`/xrpc/${id}`] = { get };
+            viewTags[view.slug].add(calculateTag(id));
           }
           break;
         }
@@ -224,57 +263,57 @@ async function main() {
     }
   }
 
-  const tags = sortedTags();
-
-  const api: OpenAPIV3_1.Document & { "x-tagGroups"?: unknown } = {
-    openapi: "3.1.0",
-    info: {
-      title: "Bluesky HTTP API Reference",
-      summary: "HTTP/XRPC endpoint reference for Bluesky and AT Protocol lexicons.",
-      description: [
-        "This is the HTTP API reference for Bluesky. It covers the `app.bsky.*`, `com.atproto.*`, `chat.bsky.*`, and `tools.ozone.*` Lexicon namespaces — the Lexicons implemented by the Bluesky application, its related services (chat, Ozone moderation), and the AT Protocol PDS surface those services build on.",
-        "The wider AT Protocol Lexicon ecosystem is open and any service can publish its own Lexicons. For an index of community Lexicons see [lexicon.garden](https://lexicon.garden/), and for the schema language itself see the [Lexicon guide](https://atproto.com/guides/lexicon).",
-        "## Authentication and request routing",
-        "These endpoints don't all live on the same host, and where a request should be sent depends on whether the caller is authenticated:",
-        [
-          "- **Most `app.bsky.*` `GET`s are public** and can be called without authentication against the Bluesky AppView at `https://public.api.bsky.app`. `POST`s (writes) and any endpoint that returns account-private data require auth.",
-          "- **Authenticated requests should be sent to the user's own PDS**. The PDS validates the session and, if needed, proxies the request to the correct backend. Proxied requests should [include an `atproto-proxy` header](https://atproto.com/specs/xrpc#service-proxying).",
-        ].join("\n"),
-        "For client libraries that handle session management and proxying for you, see the [AT Protocol SDKs](https://atproto.com/sdks).",
-      ].join("\n\n"),
-      version: "0.0.0",
+  const servers: OpenAPIV3_1.ServerObject[] = [
+    {
+      url: "https://public.api.bsky.app",
+      description: "Public Bluesky AppView. Use this for unauthenticated `app.bsky.*` reads — no token required.",
     },
-    servers: [
-      {
-        url: "https://public.api.bsky.app",
-        description: "Public Bluesky AppView. Use this for unauthenticated `app.bsky.*` reads — no token required.",
+    {
+      url: "https://{host}",
+      description:
+        "Provide your PDS hostname. Use `bsky.social` if your account is hosted by Bluesky; replace it with your own PDS hostname (e.g. `pds.example.com`) if you're self-hosted. The PDS handles auth and proxies `app.bsky` / `chat.bsky` / `tools.ozone` calls onward. To get a token to make requests from this page, call `com.atproto.server.createSession` with your handle and an [app password](https://bsky.app/settings/app-passwords), and paste the returned `accessJwt` into the **Authentication** panel below. The token is then attached to every test request automatically.",
+      variables: {
+        host: { default: "bsky.social" },
       },
-      {
-        url: "https://{host}",
-        description:
-          "Provide your PDS hostname. Use `bsky.social` if your account is hosted by Bluesky; replace it with your own PDS hostname (e.g. `pds.example.com`) if you're self-hosted. The PDS handles auth and proxies `app.bsky` / `chat.bsky` / `tools.ozone` calls onward. To get a token to make requests from this page, call `com.atproto.server.createSession` with your handle and an [app password](https://bsky.app/settings/app-passwords), and paste the returned `accessJwt` into the **Authentication** panel below. The token is then attached to every test request automatically.",
-        variables: {
-          host: { default: "bsky.social" },
-        },
-      },
-    ],
-    // Auth requirements aren't encoded in the lexicons, so we don't declare a
-    // document- or operation-level `security` array — that keeps Scalar from
-    // stamping a misleading "Auth Optional" badge on every endpoint. The Bearer
-    // scheme stays declared in components so the Auth panel still renders, and
-    // `preferredSecurityScheme` in the renderer auto-selects it for test
-    // requests.
-    paths,
-    components,
-    tags: tags.map((name) => ({ name })),
-    "x-tagGroups": tagGroups(tags),
-  };
+    },
+  ];
 
-  await writeFile(OUTPUT, JSON.stringify(api, null, 2) + "\n");
-  console.log(
-    `Wrote ${OUTPUT}: ${Object.keys(paths).length} endpoints, ` +
-      `${Object.keys(components.schemas!).length} schemas, ${tags.length} tags.`,
-  );
+  // One OpenAPI document per view; the renderer surfaces them as a switcher
+  // dropdown. They share the Introduction (`info.description`), servers, and the
+  // full component set (cross-namespace `$ref`s are common, and bundling every
+  // schema in each document keeps those pointers from dangling).
+  for (const view of VIEWS) {
+    const tags = sortedTags(viewTags[view.slug]);
+    const paths = viewPaths[view.slug];
+
+    const api: OpenAPIV3_1.Document & { "x-tagGroups"?: unknown } = {
+      openapi: "3.1.0",
+      info: {
+        title: `Bluesky HTTP API Reference — ${view.title}`,
+        summary: "HTTP/XRPC endpoint reference for Bluesky and AT Protocol lexicons.",
+        description: SHARED_DESCRIPTION,
+        version: "0.0.0",
+      },
+      servers,
+      // Auth requirements aren't encoded in the lexicons, so we don't declare a
+      // document- or operation-level `security` array — that keeps Scalar from
+      // stamping a misleading "Auth Optional" badge on every endpoint. The Bearer
+      // scheme stays declared in components so the Auth panel still renders, and
+      // `preferredSecurityScheme` in the renderer auto-selects it for test
+      // requests.
+      paths,
+      components,
+      tags: tags.map((name) => ({ name })),
+      "x-tagGroups": tagGroups(tags),
+    };
+
+    const output = outputFor(view.slug);
+    await writeFile(output, JSON.stringify(api, null, 2) + "\n");
+    console.log(
+      `Wrote ${output}: ${Object.keys(paths).length} endpoints, ` +
+        `${Object.keys(components.schemas!).length} schemas, ${tags.length} tags.`,
+    );
+  }
 }
 
 main().catch((err) => {

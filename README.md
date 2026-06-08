@@ -14,12 +14,12 @@ lexicons.json (allowlist, CID-pinned)
       │  @atproto/lex  (resolves NSIDs via DNS, fetches + transitive defs)
       ▼
 lexicons/**/*.json  (committed lexicon documents)
-      │  src/build-openapi.ts  (lexicon -> OpenAPI converter)
+      │  src/build-openapi.ts  (lexicon -> OpenAPI converter, one doc per view)
       ▼
-openapi.json
+openapi.<view>.json  (Bluesky App / Bluesky DMs / Ozone Moderation)
       │  src/render.ts  (vendors Scalar's MIT standalone bundle)
       ▼
-out/  (index.html + openapi.json + scalar.standalone.js — fully self-contained)
+out/  (index.html + openapi.<view>.json + scalar.standalone.js — fully self-contained)
 ```
 
 - **Scope is by namespace, endpoints are auto-discovered.** `INCLUDE_PREFIXES` in
@@ -33,13 +33,18 @@ out/  (index.html + openapi.json + scalar.standalone.js — fully self-contained
   (`*.defs`, records, tokens) become OpenAPI components — needed for `$ref`s — but
   never appear as empty endpoint cards. Deprecated schema defs are kept (so refs
   don't dangle) but flagged `deprecated`.
-- **Bluesky-first ordering:** `NAMESPACE_ORDER` biases `app.bsky.*` and
-  `com.atproto.*` ahead of the rest (rendered via OpenAPI `x-tagGroups`).
-  Shared auth/proxy guidance lives in the OpenAPI `info.description` rendered
-  as the reference's Introduction.
+- **Split into views.** `VIEWS` in `endpoints.config.ts` partitions the namespaces
+  into separate OpenAPI documents — Bluesky App (`app.bsky.*` + `com.atproto.*`),
+  Bluesky DMs (`chat.bsky.*`), and Ozone Moderation (`tools.ozone.*`) — each written
+  as `openapi.<slug>.json`. The renderer surfaces them via Scalar's multi-source
+  switcher (the dropdown in the top left). All views share the same Introduction.
+- **Bluesky-first ordering:** within each view, `NAMESPACE_ORDER` biases
+  `app.bsky.*` and `com.atproto.*` ahead of the rest (rendered via OpenAPI
+  `x-tagGroups`). Shared auth/proxy guidance lives in the OpenAPI `info.description`
+  rendered as each view's Introduction (`SHARED_DESCRIPTION` in `build-openapi.ts`).
 - **No SaaS:** the rendered site embeds Scalar's open-source (MIT) `api-reference`
-  bundle, vendored locally. No hosted service, no runtime external calls, and a
-  downloadable `openapi.json` for Postman/SDK codegen/etc.
+  bundle, vendored locally. No hosted service, no runtime external calls, and
+  downloadable `openapi.<slug>.json` specs for Postman/SDK codegen/etc.
 
 ## Commands
 
@@ -47,8 +52,8 @@ out/  (index.html + openapi.json + scalar.standalone.js — fully self-contained
 npm install                  # one-time
 npm run seed                 # enumerate endpoints in INCLUDE_PREFIXES -> lexicons.json + fetch
 npm run build                # install-lexicons:ci -> build:openapi -> build:site
-npm run build:openapi        # lexicons/ -> openapi.json
-npm run build:site           # openapi.json -> out/
+npm run build:openapi        # lexicons/ -> openapi.<view>.json (one per VIEW)
+npm run build:site           # openapi.<view>.json -> out/
 npx serve out                # preview (use http; file:// won't fetch the JSON)
 ```
 
@@ -69,5 +74,5 @@ Changing scope: edit `INCLUDE_PREFIXES` / `EXCLUDE` in `endpoints.config.ts`, ru
   [nodejs/node#62347](https://github.com/nodejs/node/issues/62347) (Windows-only
   loopback-DNS bug that breaks `lex`'s `_lexicon.*` TXT lookups). It is a no-op on
   healthy systems, including Linux CI.
-- `openapi.json` and `out/` are git-ignored; they are regenerated from the
+- `openapi.*.json` and `out/` are git-ignored; they are regenerated from the
   committed `lexicons/` + `lexicons.json`.
