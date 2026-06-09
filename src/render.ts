@@ -68,10 +68,9 @@ const HTML = `<!doctype html>
         // Scalar also drops the otherwise-empty "Client Libraries" intro card.
         hiddenClients: true,
         // The spec declares the Bearer scheme in components.securitySchemes
-        // but no document-level security array (to avoid the misleading
-        // "Auth Optional" badge on every endpoint). Pre-select Bearer in the
-        // intro Auth panel so a token entered there is applied to every test
-        // request.
+        // and attaches it per-operation only on endpoints requiresAuth flags
+        // (see build-openapi.ts). Pre-select Bearer in the intro Auth panel so
+        // a token entered there is applied to every test request.
         authentication: { preferredSecurityScheme: 'Bearer' },
         // Rename the intro server card's "Server" title-bar label to
         // "Demo Server" so it's obvious the host picker only powers in-page
@@ -79,6 +78,10 @@ const HTML = `<!doctype html>
         // The title-bar label carries .bg-b-2.rounded-t-xl (other labels
         // inside the card — e.g. the host variable input's label — don't),
         // so this selector hits only the title bar.
+        //
+        // Also: hide the per-operation "Ask AI" inputs that Scalar renders in
+        // each operation's footer (.agent-button-container). The sidebar
+        // "Ask AI" button is replaced with a Docs link in the script below.
         customCss: \`
           .scalar-reference-intro-server label.bg-b-2.rounded-t-xl { font-size: 0; }
           .scalar-reference-intro-server label.bg-b-2.rounded-t-xl::before {
@@ -86,8 +89,73 @@ const HTML = `<!doctype html>
             font-size: 0.875rem;
             font-weight: 500;
           }
+          .agent-button-container { display: none !important; }
         \`,
       })
+    </script>
+    <script>
+      // (1) Replace Scalar's "Ask AI" button in the sidebar header with a
+      //     "Docs" link back to docs.bsky.app. Scalar has no first-class hook
+      //     for adding a custom button to the sidebar header, so we patch the
+      //     DOM after each render. The per-operation Ask AI form is hidden
+      //     separately via customCss above. (We don't run our own AI flow off
+      //     this site, so Scalar's chat would just confuse readers.)
+      //
+      // (2) Hide Scalar's "Test Request" button on operations that require
+      //     auth. The spec encodes this per-operation as a Bearer security
+      //     requirement (see build-openapi.ts); Scalar in turn renders a
+      //     SecurityRequirementBadge (.security-requirement-badge) in those
+      //     operations. We use that badge's presence as the trigger: any
+      //     operation <section> containing the badge has its test button
+      //     hidden, because there isn't a clean way to drive an authed call
+      //     from this static page (the user would need to manually mint a
+      //     PDS-issued bearer token via createSession first).
+      (function () {
+        var DOCS_URL = 'https://docs.bsky.app';
+
+        function swapAskAiButton() {
+          // Single button anywhere in the chrome (the per-operation Ask AI is a
+          // form with an input + send icon, not a button literally labeled
+          // "Ask AI", so this exact-text match is specific enough for both
+          // modern and classic layouts).
+          var buttons = document.querySelectorAll('button');
+          for (var i = 0; i < buttons.length; i++) {
+            var b = buttons[i];
+            if (b.textContent.trim() !== 'Ask AI') continue;
+            var a = document.createElement('a');
+            a.href = DOCS_URL;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.className = b.className;
+            a.textContent = 'Docs';
+            a.setAttribute('aria-label', 'docs.bsky.app (opens in new tab)');
+            b.replaceWith(a);
+          }
+        }
+
+        function hideAuthTestButtons(root) {
+          var sections = (root || document).querySelectorAll('section.section');
+          for (var i = 0; i < sections.length; i++) {
+            var section = sections[i];
+            var btn = section.querySelector('.show-api-client-button');
+            if (!btn) continue;
+            var hasBadge = !!section.querySelector('.security-requirement-badge');
+            btn.style.display = hasBadge ? 'none' : '';
+          }
+        }
+
+        function tick() {
+          swapAskAiButton();
+          hideAuthTestButtons();
+        }
+
+        // Scalar mounts the sidebar and operations asynchronously and may
+        // re-render on document switches; a MutationObserver keeps both
+        // patches stable across those transitions.
+        var observer = new MutationObserver(tick);
+        observer.observe(document.body, { childList: true, subtree: true });
+        tick();
+      })();
     </script>
     <script>
       // Make the Introduction's cross-links (e.g. "Bluesky DMs",

@@ -17,6 +17,33 @@ import { calculateTag, loadLexicon } from "./lib/utils";
 import { codeSamplesFor } from "./lib/codesamples";
 
 /**
+ * Heuristic: does this operation require an authenticated session?
+ *
+ * Lexicons mark some endpoints with "Requires auth" in the description but the
+ * convention is incomplete (e.g. `chat.bsky.*` and `tools.ozone.*` rarely use
+ * it). We additionally treat the following as auth-required:
+ *   - everything proxied via PDS to chat/Ozone backends
+ *   - every write under `app.bsky.*` and `com.atproto.repo.*`
+ *
+ * `com.atproto.server.*` procedures are deliberately *not* auto-flagged: that's
+ * where unauthenticated bootstrap endpoints live (createSession, createAccount,
+ * requestPasswordReset, ...). The few server endpoints that do require auth
+ * (deleteAccount, refreshSession, ...) already say so in their description.
+ *
+ * The flag is surfaced to Scalar as a per-operation `security: [{ Bearer: [] }]`
+ * — that drives the "Auth Required" badge and lets the renderer hide the
+ * misleading test-request button.
+ */
+function requiresAuth(id: string, def: any): boolean {
+  if (id.startsWith("chat.bsky.") || id.startsWith("tools.ozone.")) return true;
+  if (def.type === "procedure") {
+    if (id.startsWith("app.bsky.") || id.startsWith("com.atproto.repo.")) return true;
+  }
+  const desc = String(def.description ?? "").toLowerCase();
+  return desc.includes("requires auth");
+}
+
+/**
  * For chat.bsky.* and tools.ozone.*, the PDS needs an `atproto-proxy` header
  * naming the backend to forward to. We surface this as an OpenAPI header
  * parameter with a `default`, so Scalar's test-request panel pre-fills the
@@ -52,6 +79,16 @@ function injectProxyHeader(
   const param = atprotoProxyParameter(id);
   if (!param) return;
   op.parameters = [...(op.parameters ?? []), param];
+}
+
+function injectSecurity(
+  op: OpenAPIV3_1.OperationObject,
+  id: string,
+  def: any,
+): void {
+  if (requiresAuth(id, def)) {
+    op.security = [{ Bearer: [] }];
+  }
 }
 import {
   convertArray,
@@ -213,6 +250,7 @@ async function main() {
           if (post) {
             (post as any)["x-codeSamples"] = codeSamplesFor(id, def);
             injectProxyHeader(post, id);
+            injectSecurity(post, id, def);
             // @ts-ignore method-keyed PathItem
             viewPaths[view.slug][`/xrpc/${id}`] = { post };
             viewTags[view.slug].add(calculateTag(id));
@@ -227,6 +265,7 @@ async function main() {
           if (get) {
             (get as any)["x-codeSamples"] = codeSamplesFor(id, def);
             injectProxyHeader(get, id);
+            injectSecurity(get, id, def);
             // @ts-ignore method-keyed PathItem
             viewPaths[view.slug][`/xrpc/${id}`] = { get };
             viewTags[view.slug].add(calculateTag(id));
@@ -295,12 +334,12 @@ async function main() {
         version: "0.0.0",
       },
       servers,
-      // Auth requirements aren't encoded in the lexicons, so we don't declare a
-      // document- or operation-level `security` array — that keeps Scalar from
-      // stamping a misleading "Auth Optional" badge on every endpoint. The Bearer
-      // scheme stays declared in components so the Auth panel still renders, and
-      // `preferredSecurityScheme` in the renderer auto-selects it for test
-      // requests.
+      // No document-level `security` array — we only declare it per-operation
+      // (via `injectSecurity`) on endpoints flagged by `requiresAuth`. That way
+      // Scalar stamps an accurate "Auth Required" badge on the writes/proxied
+      // endpoints it applies to, and stays silent on the public reads. The
+      // renderer uses the badge's presence to hide the test-request button on
+      // those operations — see render.ts.
       paths,
       components,
       tags: tags.map((name) => ({ name })),
