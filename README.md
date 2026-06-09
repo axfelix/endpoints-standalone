@@ -42,9 +42,6 @@ out/  (index.html + openapi.<view>.json + scalar.standalone.js — fully self-co
   `app.bsky.*` and `com.atproto.*` ahead of the rest (rendered via OpenAPI
   `x-tagGroups`). Shared auth/proxy guidance lives in the OpenAPI `info.description`
   rendered as each view's Introduction (`SHARED_DESCRIPTION` in `build-openapi.ts`).
-- **No SaaS:** the rendered site embeds Scalar's open-source (MIT) `api-reference`
-  bundle, vendored locally. No hosted service, no runtime external calls, and
-  downloadable `openapi.<slug>.json` specs for Postman/SDK codegen/etc.
 
 ## Commands
 
