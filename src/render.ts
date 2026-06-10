@@ -94,12 +94,16 @@ const HTML = `<!doctype html>
       })
     </script>
     <script>
-      // (1) Replace Scalar's "Ask AI" button in the sidebar header with a
-      //     "Docs" link back to docs.bsky.app. Scalar has no first-class hook
-      //     for adding a custom button to the sidebar header, so we patch the
-      //     DOM after each render. The per-operation Ask AI form is hidden
-      //     separately via customCss above. (We don't run our own AI flow off
-      //     this site, so Scalar's chat would just confuse readers.)
+      // (1) Inject a "Docs" link back to docs.bsky.app into the sidebar header,
+      //     next to the search button. We can't reuse Scalar's "Ask AI" button
+      //     slot because Scalar's useAgent() gates that button on
+      //     isLocalUrl(window.location.href) — so on the deployed site it isn't
+      //     rendered at all, and any "swap the existing button" approach would
+      //     silently no-op. Instead we anchor on the search button (always
+      //     present unless hideSearch is set) and append our own link to its
+      //     container. If Scalar's Ask AI button *is* present (local dev), we
+      //     hide it to avoid showing both side-by-side. The per-operation Ask
+      //     AI form is hidden separately via customCss above.
       //
       // (2) Hide Scalar's "Test Request" button on operations that require
       //     auth. The spec encodes this per-operation as a Bearer security
@@ -112,25 +116,32 @@ const HTML = `<!doctype html>
       //     PDS-issued bearer token via createSession first).
       (function () {
         var DOCS_URL = 'https://docs.bsky.app';
+        // Match the classes Scalar applies to AgentScalarButton so the Docs
+        // link visually slots into where the Ask AI button used to live.
+        var DOCS_CLASS =
+          'bg-sidebar-b-search text-sidebar-c-2 hover:text-sidebar-c-1 ' +
+          'flex items-center gap-1.5 rounded border px-2 text-base whitespace-nowrap';
 
-        function swapAskAiButton() {
-          // Single button anywhere in the chrome (the per-operation Ask AI is a
-          // form with an input + send icon, not a button literally labeled
-          // "Ask AI", so this exact-text match is specific enough for both
-          // modern and classic layouts).
-          var buttons = document.querySelectorAll('button');
+        function ensureDocsLink() {
+          var searchBtn = document.querySelector('button[role="search"]');
+          if (!searchBtn || !searchBtn.parentElement) return;
+          var container = searchBtn.parentElement;
+          if (container.querySelector('a[data-bsky-docs-link]')) return;
+          var buttons = container.querySelectorAll('button');
           for (var i = 0; i < buttons.length; i++) {
-            var b = buttons[i];
-            if (b.textContent.trim() !== 'Ask AI') continue;
-            var a = document.createElement('a');
-            a.href = DOCS_URL;
-            a.target = '_blank';
-            a.rel = 'noopener';
-            a.className = b.className;
-            a.textContent = 'Docs';
-            a.setAttribute('aria-label', 'docs.bsky.app (opens in new tab)');
-            b.replaceWith(a);
+            if (buttons[i].textContent.trim() === 'Ask AI') {
+              buttons[i].style.display = 'none';
+            }
           }
+          var a = document.createElement('a');
+          a.href = DOCS_URL;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.className = DOCS_CLASS;
+          a.textContent = 'Docs';
+          a.setAttribute('aria-label', 'docs.bsky.app (opens in new tab)');
+          a.setAttribute('data-bsky-docs-link', '');
+          container.appendChild(a);
         }
 
         function hideAuthTestButtons(root) {
@@ -145,7 +156,7 @@ const HTML = `<!doctype html>
         }
 
         function tick() {
-          swapAskAiButton();
+          ensureDocsLink();
           hideAuthTestButtons();
         }
 
