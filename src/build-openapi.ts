@@ -331,7 +331,10 @@ async function main() {
         title: `Bluesky HTTP API Reference — ${view.title}`,
         summary: "HTTP/XRPC endpoint reference for Bluesky and AT Protocol lexicons.",
         description: SHARED_DESCRIPTION,
-        version: "0.0.0",
+        // We don't version this HTTP reference list, so leave it empty: Scalar's
+        // InfoVersion badge renders nothing for a falsy version string (a real
+        // "0.0.0" would otherwise show a meaningless "v0.0.0" badge by the title).
+        version: "",
       },
       servers,
       // No document-level `security` array — we only declare it per-operation

@@ -47,7 +47,7 @@ const HTML = `<!doctype html>
     <title>Bluesky HTTP API Reference</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/png" href="./favicon.png" />
   </head>
   <body>
     <div id="app"></div>
@@ -237,6 +237,7 @@ async function main() {
     await copyFile(resolve(process.cwd(), specFile(v.slug)), resolve(OUT, specFile(v.slug)));
   }
   await copyFile(scalarStandalone, resolve(OUT, "scalar.standalone.js"));
+  await copyFile(resolve(process.cwd(), "assets/favicon.png"), resolve(OUT, "favicon.png"));
   await writeFile(resolve(OUT, "index.html"), HTML);
   const specs = VIEWS.map((v) => specFile(v.slug)).join(", ");
   console.log(`Wrote static site to ${OUT} (index.html, ${specs}, scalar.standalone.js).`);
