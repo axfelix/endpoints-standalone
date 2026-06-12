@@ -6,6 +6,7 @@
   "description": "Standalone HTTP/XRPC endpoint reference for Bluesky lexicons (generated from on-network schemas via @atproto/lex, rendered as OpenAPI).",
   "scripts": {
     "seed": "tsx scripts/seed-allowlist.ts",
+    "probe": "tsx scripts/probe-implemented.ts",
     "install-lexicons": "node scripts/lex.mjs install",
     "install-lexicons:ci": "node scripts/lex.mjs install --ci",
     "update-lexicons": "node scripts/lex.mjs install --update",

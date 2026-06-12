@@ -39,6 +39,45 @@ export const SCHEMA_AUTHORITIES: string[] = [
 export const EXCLUDE: string[] = [];
 
 /**
+ * Live-implementation boundary (`scripts/probe-implemented.ts` → `npm run probe`).
+ *
+ * The schema authorities publish every *specced* `com.atproto` endpoint, but
+ * Bluesky's live services don't necessarily serve all of them yet — e.g. the newer
+ * `com.atproto.identity` GET methods (`resolveDid`, `resolveIdentity`,
+ * `refreshIdentity`) currently return `501 MethodNotImplemented`. The probe calls
+ * each enumerated `com.atproto` **query** against the canonical Bluesky hosts and
+ * records the ones that aren't served anywhere into `UNIMPLEMENTED_MANIFEST`;
+ * `build-openapi` then unlists those (no path, no sidebar tag), exactly like
+ * deprecated/unspecced endpoints. Only queries are probed — we never fire
+ * procedures (writes) at the live network.
+ *
+ * Routing is the whole trick. Each method has a *home* service, and every host
+ * returns `501 MethodNotImplemented` for methods that aren't its own, so a single
+ * host can't tell "unimplemented" from "lives elsewhere". We probe a panel:
+ *   - `appview` / `relay` are POSITIVE-only signals: a non-501 there means "served
+ *     here, keep it" (this is what rescues `identity.resolveHandle`, `repo.getRecord`,
+ *     `sync.*`); their 501 means nothing.
+ *   - `pds` is the AUTHORITATIVE signal, but only once authenticated. The entryway
+ *     auth-gates *before* method resolution, so unauthenticated every method — real
+ *     or not — returns `401`. Set `BSKY_PROBE_IDENTIFIER` + `BSKY_PROBE_APP_PASSWORD`
+ *     (any account's app password works — the probe only sends GETs, so it never
+ *     writes despite the password's full scope) to get
+ *     a real `501`-vs-`200/400` answer. Override the host with `BSKY_PROBE_PDS` if
+ *     self-hosted. Without credentials the probe is a safe no-op: it can't reach the
+ *     true handler, so it unlists nothing and warns.
+ *
+ * The decision per endpoint: keep if any host says implemented; unlist only if the
+ * authoritative PDS says `501 MethodNotImplemented`; otherwise keep (inconclusive).
+ */
+export const PROBE_NAMESPACE = "com.atproto.";
+export const PROBE_HOSTS = {
+  appview: "https://public.api.bsky.app",
+  relay: "https://relay1.us-west.bsky.network",
+  pds: "https://bsky.social",
+};
+export const UNIMPLEMENTED_MANIFEST = "unimplemented.json";
+
+/**
  * Group/sort bias: namespaces matching earlier prefixes render first. Anything not
  * matched falls to the end in lexical order. Used to build OpenAPI `x-tagGroups`
  * and to sort the `tags` array.
