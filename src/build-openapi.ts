@@ -9,6 +9,7 @@
  * (Scalar) loads them as a multi-source switcher.
  */
 import { writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import fg from "fast-glob";
 import type { OpenAPIV3_1 } from "openapi-types";
@@ -99,9 +100,32 @@ import {
   convertString,
   convertToken,
 } from "./lib/converters/mod";
-import { INCLUDE_PREFIXES, NAMESPACE_ORDER, VIEWS, type View } from "../endpoints.config";
+import {
+  INCLUDE_PREFIXES,
+  NAMESPACE_ORDER,
+  VIEWS,
+  UNIMPLEMENTED_MANIFEST,
+  type View,
+} from "../endpoints.config";
 
 const LEXICONS_DIR = resolve(process.cwd(), "lexicons");
+
+/**
+ * Endpoints the live network answers with `501 MethodNotImplemented`, discovered by
+ * `npm run probe` (see `scripts/probe-implemented.ts`). They're specced but not
+ * served, so we don't list cards for them — same treatment as unspecced/deprecated.
+ * Absent/unreadable manifest ⇒ no boundary (build stays self-contained for CI).
+ */
+const UNIMPLEMENTED: Set<string> = (() => {
+  const path = resolve(process.cwd(), UNIMPLEMENTED_MANIFEST);
+  if (!existsSync(path)) return new Set<string>();
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    return new Set<string>(data.unimplemented ?? []);
+  } catch {
+    return new Set<string>();
+  }
+})();
 
 /** Per-view file written next to this config: `openapi.<slug>.json`. */
 function outputFor(slug: string): string {
@@ -259,6 +283,9 @@ async function main() {
         }
         case "query": {
           if (!isEndpointNamespace) break;
+          // Specced but unimplemented upstream (probe found 501 MethodNotImplemented):
+          // keep the schema as a possible `$ref` target, but emit no endpoint card.
+          if (UNIMPLEMENTED.has(identifier)) break;
           const view = viewForId(id);
           if (!view) break;
           const get = convertQuery(id, name, def);

@@ -1,0 +1,11 @@
+{
+  "$generated": "scripts/probe-implemented.ts (npm run probe) — com.atproto queries the live network answers with 501 MethodNotImplemented. Do not edit by hand.",
+  "probedAt": "2026-06-12T18:23:36.001Z",
+  "pds": "https://bsky.social",
+  "authenticated": true,
+  "unimplemented": [
+    "com.atproto.identity.resolveDid",
+    "com.atproto.identity.resolveIdentity",
+    "com.atproto.lexicon.resolveLexicon"
+  ]
+}
